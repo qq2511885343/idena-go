@@ -2,6 +2,7 @@ package state
 
 import (
 	"github.com/idena-network/idena-go/common"
+	"github.com/idena-network/idena-go/log"
 	"sync"
 )
 
@@ -16,6 +17,7 @@ type NonceCache struct {
 	mu sync.Mutex
 
 	accounts map[common.Address]map[uint16]*account
+	Coinbase common.Address
 }
 
 func NewNonceCache(sdb *StateDB) (*NonceCache, error) {
@@ -35,7 +37,11 @@ func (ns *NonceCache) GetNonce(addr common.Address, epoch uint16) uint32 {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 
-	return ns.getAccount(addr, epoch).nonce
+	nonce := ns.getAccount(addr, epoch).nonce
+	if addr == ns.Coinbase {
+		log.Info("NonceCache.GetNonce", "nonce", nonce)
+	}
+	return nonce
 }
 
 func (ns *NonceCache) Lock() {
@@ -65,6 +71,9 @@ func (ns *NonceCache) SetNonce(addr common.Address, txEpoch uint16, nonce uint32
 
 func (ns *NonceCache) UnsafeSetNonce(addr common.Address, txEpoch uint16, nonce uint32) {
 	acc := ns.getAccount(addr, txEpoch)
+	if addr == ns.Coinbase {
+		log.Info("NonceCache.SetNonce", "current", acc.nonce, "new", nonce)
+	}
 	if acc.nonce < nonce {
 		acc.nonce = nonce
 	}
@@ -76,16 +85,31 @@ func (ns *NonceCache) getAccount(addr common.Address, epoch uint16) *account {
 		so := ns.fallback.GetOrNewAccountObject(addr)
 		ns.accounts[addr] = make(map[uint16]*account)
 		ns.accounts[addr][epoch] = ns.newAccount(so, epoch)
+		if addr == ns.Coinbase {
+			log.Info("NonceCache.getAccount: addr is not found in memory, read from state", "nonce", ns.accounts[addr][epoch].nonce)
+		}
 	} else {
 		if acc, ok := epochs[epoch]; !ok {
 			so := ns.fallback.GetOrNewAccountObject(addr)
 			ns.accounts[addr][epoch] = ns.newAccount(so, epoch)
+			if addr == ns.Coinbase {
+				log.Info("NonceCache.getAccount: epoch is not found in memory, read from state", "nonce", ns.accounts[addr][epoch].nonce)
+			}
 		} else {
 			// Always make sure the state account nonce isn't actually higher
 			// than the tracked one.
 			so := ns.fallback.getStateAccount(addr)
+			if addr == ns.Coinbase && so != nil {
+				log.Info("NonceCache.getAccount", "state-nonce", so.Nonce())
+			}
 			if so != nil && acc.nonce < so.Nonce() && so.Epoch() == epoch {
+				if addr == ns.Coinbase {
+					log.Info("NonceCache.getAccount: nonce in memory is less that state-nonce", "state-nonce", so.Nonce(), "in-mem", acc.nonce)
+				}
 				ns.accounts[addr][epoch] = ns.newAccount(so, epoch)
+				if addr == ns.Coinbase {
+					log.Info("NonceCache.getAccount: recreated account in memory", "nonce", ns.accounts[addr][epoch].nonce)
+				}
 			}
 		}
 	}
