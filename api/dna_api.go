@@ -16,6 +16,7 @@ import (
 	"github.com/idena-network/idena-go/core/profile"
 	"github.com/idena-network/idena-go/core/state"
 	"github.com/idena-network/idena-go/crypto"
+	"github.com/idena-network/idena-go/log"
 	"github.com/idena-network/idena-go/rlp"
 	"github.com/ipfs/go-cid"
 	"github.com/pkg/errors"
@@ -155,6 +156,8 @@ func (api *DnaApi) ActivateInvite(ctx context.Context, args ActivateInviteArgs) 
 }
 
 func (api *DnaApi) BecomeOnline(ctx context.Context, args BaseTxArgs) (common.Hash, error) {
+	log.Info("Become online tx")
+
 	from := api.baseApi.getCurrentCoinbase()
 	hash, err := api.baseApi.sendTx(ctx, from, nil, types.OnlineStatusTx, decimal.Zero, decimal.Zero, decimal.Zero, args.Nonce, args.Epoch, attachments.CreateOnlineStatusAttachment(true), nil)
 
@@ -166,6 +169,8 @@ func (api *DnaApi) BecomeOnline(ctx context.Context, args BaseTxArgs) (common.Ha
 }
 
 func (api *DnaApi) BecomeOffline(ctx context.Context, args BaseTxArgs) (common.Hash, error) {
+	log.Info("Become offline tx")
+
 	from := api.baseApi.getCurrentCoinbase()
 	hash, err := api.baseApi.sendTx(ctx, from, nil, types.OnlineStatusTx, decimal.Zero, decimal.Zero, decimal.Zero, args.Nonce, args.Epoch, attachments.CreateOnlineStatusAttachment(false), nil)
 

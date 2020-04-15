@@ -169,12 +169,15 @@ func (proposals *Proposals) ProcessPendingBlocks() []*types.BlockProposal {
 	var result []*types.BlockProposal
 
 	proposals.pendingBlocks.Range(func(key, value interface{}) bool {
+		t := time.Now()
 		blockPeer := value.(*blockPeer)
 		if added, pending := proposals.AddProposedBlock(blockPeer.proposal, blockPeer.peerId, blockPeer.receivingTime); added {
 			result = append(result, blockPeer.proposal)
 		} else if !pending {
 			proposals.pendingBlocks.Delete(key)
 		}
+
+		log.Info("block processed", "time", time.Since(t).String(), "block", blockPeer.proposal.Height(), "hash", blockPeer.proposal.Hash().String())
 
 		return true
 	})
