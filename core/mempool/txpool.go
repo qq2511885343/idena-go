@@ -290,6 +290,9 @@ func (pool *TxPool) put(tx *types.Transaction) error {
 
 	pool.all.Add(tx)
 
+	if sender == pool.coinbase {
+		log.Info("put: set new nonce to nonce cache", "nonce", tx.AccountNonce)
+	}
 	pool.appState.NonceCache.SetNonce(sender, tx.Epoch, tx.AccountNonce)
 
 	pool.bus.Publish(&events.NewTxEvent{
