@@ -80,6 +80,7 @@ func NewTxPool(appState *appstate.AppState, bus eventbus.Bus, cfg *config.Mempoo
 func (pool *TxPool) Initialize(head *types.Header, coinbase common.Address) {
 	pool.head = head
 	pool.coinbase = coinbase
+	pool.appState.NonceCache.Coinbase = coinbase
 }
 
 func (pool *TxPool) addDeferredTx(tx *types.Transaction) {

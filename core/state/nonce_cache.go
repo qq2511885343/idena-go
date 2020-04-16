@@ -48,10 +48,12 @@ func (ns *NonceCache) GetNonce(addr common.Address, epoch uint16) uint32 {
 }
 
 func (ns *NonceCache) Lock() {
+	log.Info("NonceCache.Lock")
 	ns.mu.Lock()
 }
 
 func (ns *NonceCache) UnLock() {
+	log.Info("NonceCache.UnLock")
 	ns.mu.Unlock()
 }
 
@@ -61,6 +63,7 @@ func (ns *NonceCache) ReloadFallback() error {
 		return err
 	}
 	ns.fallback = readonly
+	log.Info("NonceCache.ReloadFallback")
 	return nil
 }
 
@@ -75,7 +78,7 @@ func (ns *NonceCache) SetNonce(addr common.Address, txEpoch uint16, nonce uint32
 func (ns *NonceCache) UnsafeSetNonce(addr common.Address, txEpoch uint16, nonce uint32) {
 	acc := ns.getAccount(addr, txEpoch)
 	if addr == ns.Coinbase {
-		log.Info("NonceCache.SetNonce", "current", acc.nonce, "new", nonce, "version", ns.Version, "addr", fmt.Sprintf("%p", ns))
+		log.Info("NonceCache.UnsafeSetNonce", "current", acc.nonce, "new", nonce, "version", ns.Version, "addr", fmt.Sprintf("%p", ns))
 	}
 	if acc.nonce < nonce {
 		acc.nonce = nonce
@@ -132,4 +135,5 @@ func (ns *NonceCache) newAccount(so *stateAccount, epoch uint16) *account {
 
 func (ns *NonceCache) Clear() {
 	ns.accounts = make(map[common.Address]map[uint16]*account)
+	log.Info("NonceCache.Clear")
 }
