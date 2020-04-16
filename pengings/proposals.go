@@ -176,9 +176,10 @@ func (proposals *Proposals) ProcessPendingBlocks() []*types.BlockProposal {
 		proposals.log.Warn("failed to create checkState", "err", err)
 	}
 	proposals.pendingBlocks.Range(func(key, value interface{}) bool {
-
+		t := time.Now()
 		blockPeer := value.(*blockPeer)
-		if added, pending := proposals.AddProposedBlock(blockPeer.proposal, blockPeer.peerId, blockPeer.receivingTime, checkState); added {
+		log.Info("start process block", "block", blockPeer.proposal.Height(), "hash", blockPeer.proposal.Hash().String())
+		if added, pending := proposals.AddProposedBlock(blockPeer.proposal, blockPeer.peerId, blockPeer.receivingTime, checkState, true); added {
 			result = append(result, blockPeer.proposal)
 		} else if !pending {
 			proposals.pendingBlocks.Delete(key)
@@ -186,50 +187,87 @@ func (proposals *Proposals) ProcessPendingBlocks() []*types.BlockProposal {
 		if checkState != nil {
 			checkState.Reset()
 		}
+		log.Info("block processed", "time", time.Since(t).String(), "block", blockPeer.proposal.Height(), "hash", blockPeer.proposal.Hash().String())
+
 		return true
 	})
 
 	return result
 }
 
-func (proposals *Proposals) AddProposedBlock(proposal *types.BlockProposal, peerId peer.ID, receivingTime time.Time, checkState *appstate.AppState) (added bool, pending bool) {
+func (proposals *Proposals) AddProposedBlock(proposal *types.BlockProposal, peerId peer.ID, receivingTime time.Time, checkState *appstate.AppState, isLog bool) (added bool, pending bool) {
 	if !proposal.IsValid() {
 		return false, false
 	}
 	block := proposal.Block
+	if isLog {
+		log.Info("Proposals: is valid checked")
+	}
 	currentRound := proposals.chain.Round()
 	if currentRound == block.Height() {
+		if isLog {
+			log.Info("Proposals: current round start")
+		}
 		if proposals.proposeCache.Add(block.Hash().Hex(), nil, cache.DefaultExpiration) != nil {
 			return false, false
+		}
+		if isLog {
+			log.Info("Proposals: proposeCache added")
 		}
 
 		m, _ := proposals.blocksByRound.LoadOrStore(block.Height(), &sync.Map{})
 		round := m.(*sync.Map)
+		if isLog {
+			log.Info("Proposals: m loaded")
+		}
 
 		if _, ok := round.Load(block.Hash()); ok {
 			return false, false
 		}
-		if err := proposals.chain.ValidateBlock(block, checkState); err != nil {
-			log.Warn("Failed proposed block validation", "err", err.Error())
+		if isLog {
+			log.Info("Proposals: round loaded")
+		}
+		if err := proposals.chain.ValidateBlock(block, checkState, isLog); err != nil {
+			if isLog {
+				log.Info("Proposals: validation failed")
+				log.Warn("Proposals: Failed proposed block validation", "err", err.Error())
+			}
 			// it might be a signal about a fork
 			if err == blockchain.ParentHashIsInvalid && peerId != "" {
 				proposals.potentialForkedPeers.Add(peerId)
 			}
 			return false, false
 		}
+		if isLog {
+			log.Info("Proposals: validation done")
+		}
 
 		if err := proposals.offlineDetector.ValidateBlock(proposals.chain.Head, block); err != nil {
-			log.Warn("Failed block offline proposing", "err", err.Error())
+			if isLog {
+				log.Warn("Failed block offline proposing", "err", err.Error())
+			}
 			return false, false
+		}
+		if isLog {
+			log.Info("Proposals: offline validation done")
 		}
 
 		round.Store(block.Hash(), &proposedBlock{proposal: proposal, receivingTime: receivingTime})
+		if isLog {
+			log.Info("Proposals: round stored")
+		}
 
 		return true, false
 	} else if currentRound < block.Height() && block.Height()-currentRound < DeferFutureProposalsPeriod {
+		if isLog {
+			log.Info("Proposals: else started")
+		}
 		proposals.pendingBlocks.LoadOrStore(block.Hash(), &blockPeer{
 			proposal: proposal, peerId: peerId, receivingTime: receivingTime,
 		})
+		if isLog {
+			log.Info("Proposals: pending stored")
+		}
 		return false, true
 	}
 	return false, false

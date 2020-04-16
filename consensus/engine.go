@@ -104,17 +104,20 @@ func (engine *Engine) GetProcess() string {
 func (engine *Engine) ReadonlyAppState() (*appstate.AppState, error) {
 	currentBlock := engine.chain.Head.Height()
 	if engine.appStateCache != nil && engine.appStateCache.block == currentBlock {
+		log.Info("readonly app state 1", "block", currentBlock)
 		return engine.appStateCache.appState, nil
 	}
 	engine.appStateCacheMutex.Lock()
 	defer engine.appStateCacheMutex.Unlock()
 	if engine.appStateCache != nil && engine.appStateCache.block == currentBlock {
+		log.Info("readonly app state 2", "block", currentBlock)
 		return engine.appStateCache.appState, nil
 	}
-	s, err := engine.chain.ReadonlyState()
+	s, err := engine.appState.Readonly(engine.chain.Head.Height())
 	if err != nil {
 		return nil, err
 	}
+	log.Info("readonly app state 3", "block", currentBlock)
 	engine.appStateCache = &appStateCache{
 		block:    uint64(s.State.Version()),
 		appState: s,
@@ -297,7 +300,12 @@ func (engine *Engine) completeRound(round uint64) {
 		engine.pm.ProposeProof(proof.Round, proof.Hash, proof.Proof, proof.PubKey)
 	}
 	engine.log.Debug("Pending proposals processed")
-	for _, block := range engine.proposals.ProcessPendingBlocks() {
+
+	blocks := engine.proposals.ProcessPendingBlocks()
+
+	engine.log.Debug("Blocks count", "count", len(blocks))
+
+	for _, block := range blocks {
 		engine.pm.ProposeBlock(block)
 	}
 	engine.log.Debug("Pending blocks processed")
@@ -313,7 +321,7 @@ func (engine *Engine) proposeBlock(hash common.Hash, proof []byte) *types.Block 
 	engine.pm.ProposeProof(proposal.Height(), hash, proof, engine.pubKey)
 	engine.pm.ProposeBlock(proposal)
 
-	engine.proposals.AddProposedBlock(proposal, "", time.Now().UTC(), nil)
+	engine.proposals.AddProposedBlock(proposal, "", time.Now().UTC(), nil, false)
 	engine.proposals.AddProposeProof(proof, hash, engine.pubKey, proposal.Height())
 
 	return proposal.Block

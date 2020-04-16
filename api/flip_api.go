@@ -42,6 +42,8 @@ type FlipSubmitArgs struct {
 }
 
 func (api *FlipApi) Submit(args FlipSubmitArgs) (FlipSubmitResponse, error) {
+	log.Info("Submit flip tx")
+
 	if args.Hex == nil && args.PublicHex == nil {
 		return FlipSubmitResponse{}, errors.New("flip is empty")
 	}

@@ -34,7 +34,6 @@ import (
 	math2 "math"
 	"math/big"
 	"sort"
-	"sync"
 	"time"
 )
 
@@ -73,7 +72,6 @@ type Blockchain struct {
 	ipfs            ipfs.Proxy
 	timing          *timing
 	bus             eventbus.Bus
-	updateHeadMutex sync.Mutex
 	applyNewEpochFn func(height uint64, appState *appstate.AppState, collector collector.StatsCollector) (int, *types.ValidationAuthors, bool)
 	isSyncing       bool
 }
@@ -277,7 +275,7 @@ func (chain *Blockchain) AddBlock(block *types.Block, checkState *appstate.AppSt
 	if err := validateBlockParentHash(block.Header, chain.Head); err != nil {
 		return err
 	}
-	if err := chain.ValidateBlock(block, checkState); err != nil {
+	if err := chain.ValidateBlock(block, checkState, false); err != nil {
 		return err
 	}
 	statsCollector.EnableCollecting()
@@ -286,17 +284,12 @@ func (chain *Blockchain) AddBlock(block *types.Block, checkState *appstate.AppSt
 	if err != nil {
 		return err
 	}
-
-	chain.updateHeadMutex.Lock()
 	if err := chain.insertBlock(block, diff); err != nil {
-		chain.updateHeadMutex.Unlock()
 		return err
 	}
-
 	if !chain.isSyncing {
 		chain.txpool.ResetTo(block)
 	}
-	chain.updateHeadMutex.Unlock()
 
 	chain.bus.Publish(&events.NewBlockEvent{
 		Block: block,
@@ -1172,7 +1165,7 @@ func (chain *Blockchain) getSortition(data []byte, threshold float64) (bool, com
 	return false, common.Hash{}, nil
 }
 
-func (chain *Blockchain) validateBlock(checkState *appstate.AppState, block *types.Block, prevBlock *types.Header) error {
+func (chain *Blockchain) validateBlock(checkState *appstate.AppState, block *types.Block, prevBlock *types.Header, isLog bool) error {
 
 	if block.IsEmpty() {
 		if chain.generateEmptyBlock(checkState, prevBlock).Hash() == block.Hash() {
@@ -1180,9 +1173,13 @@ func (chain *Blockchain) validateBlock(checkState *appstate.AppState, block *typ
 		}
 		return errors.New("empty blocks' hashes mismatch")
 	}
+	start := time.Now()
 
 	if err := chain.ValidateHeader(block.Header, prevBlock); err != nil {
 		return err
+	}
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: Validate header", "duration", time.Since(start).String())
 	}
 
 	if checkState.State.FeePerByte().Cmp(block.Header.ProposedHeader.FeePerByte) != 0 {
@@ -1194,34 +1191,54 @@ func (chain *Blockchain) validateBlock(checkState *appstate.AppState, block *typ
 	if !checkIfProposer(proposerAddr, checkState) {
 		return errors.New("proposer is not identity")
 	}
-
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: checkIfProposer", "duration", time.Since(start).String())
+	}
 	var txs = types.Transactions(block.Body.Transactions)
 
 	if types.DeriveSha(txs) != block.Header.ProposedHeader.TxHash {
 		return errors.New("txHash is invalid")
 	}
-
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: DeriveSha", "duration", time.Since(start).String())
+	}
 	if bytes.Compare(calculateTxBloom(block), block.Header.ProposedHeader.TxBloom) != 0 {
 		return errors.New("tx bloom is invalid")
 	}
-
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: calculateTxBloom", "duration", time.Since(start).String())
+	}
 	var totalFee, totalTips *big.Int
 	var err error
 	if totalFee, totalTips, err = chain.processTxs(checkState, block, nil); err != nil {
 		return err
 	}
-
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: processTxs", "duration", time.Since(start).String(), "txs", len(block.Body.Transactions))
+	}
 	persistentFlags := block.Header.ProposedHeader.Flags.UnsetFlag(types.OfflinePropose).UnsetFlag(types.OfflineCommit)
 
 	if expected := chain.calculateFlags(checkState, block); expected != persistentFlags {
 		return errors.Errorf("flags are invalid, expected=%v, actual=%v", expected, persistentFlags)
 	}
 
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: calculateFlags", "duration", time.Since(start).String())
+	}
+
 	if root, identityRoot, _ := chain.applyBlockOnState(checkState, block, prevBlock, totalFee, totalTips, nil); root != block.Root() || identityRoot != block.IdentityRoot() {
 		return errors.Errorf("invalid block roots. Expected=%x & %x, actual=%x & %x", root, identityRoot, block.Root(), block.IdentityRoot())
 	}
 
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: applyBlockOnState", "duration", time.Since(start).String())
+	}
+
 	cid, _ := chain.ipfs.Cid(block.Body.Bytes())
+
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: Cid", "duration", time.Since(start).String())
+	}
 
 	var cidBytes []byte
 	if cid != ipfs.EmptyCid {
@@ -1229,6 +1246,10 @@ func (chain *Blockchain) validateBlock(checkState *appstate.AppState, block *typ
 	}
 	if bytes.Compare(cidBytes, block.Header.ProposedHeader.IpfsHash) != 0 {
 		return errors.New("invalid block cid")
+	}
+
+	if isLog {
+		chain.log.Info("chain.ValidateBlock: finish", "duration", time.Since(start).String())
 	}
 
 	return nil
@@ -1281,7 +1302,8 @@ func (chain *Blockchain) ValidateBlockCert(prevBlock *types.Header, block *types
 	return nil
 }
 
-func (chain *Blockchain) ValidateBlock(block *types.Block, checkState *appstate.AppState) error {
+func (chain *Blockchain) ValidateBlock(block *types.Block, checkState *appstate.AppState, isLog bool) error {
+
 	if checkState == nil {
 		var err error
 		checkState, err = chain.appState.ForCheck(chain.Head.Height())
@@ -1290,7 +1312,7 @@ func (chain *Blockchain) ValidateBlock(block *types.Block, checkState *appstate.
 		}
 	}
 
-	return chain.validateBlock(checkState, block, chain.Head)
+	return chain.validateBlock(checkState, block, chain.Head, isLog)
 }
 
 func validateBlockParentHash(block *types.Header, prevBlock *types.Header) error {
@@ -1498,7 +1520,7 @@ func (chain *Blockchain) ValidateSubChain(startHeight uint64, blocks []types.Blo
 	prevBlock := chain.GetBlockHeaderByHeight(startHeight)
 
 	for _, b := range blocks {
-		if err := chain.validateBlock(checkState, b.Block, prevBlock); err != nil {
+		if err := chain.validateBlock(checkState, b.Block, prevBlock, false); err != nil {
 			return err
 		}
 		if b.Block.Header.Flags().HasFlag(types.IdentityUpdate) {
@@ -1838,10 +1860,4 @@ func (chain *Blockchain) AtomicSwitchToPreliminary(manifest *snapshot.Manifest) 
 		common.ClearDb(oldStateDb)
 	}()
 	return nil
-}
-
-func (chain *Blockchain) ReadonlyState() (*appstate.AppState, error) {
-	chain.updateHeadMutex.Lock()
-	defer chain.updateHeadMutex.Unlock()
-	return chain.appState.Readonly(chain.Head.Height())
 }
